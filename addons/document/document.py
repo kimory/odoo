@@ -31,8 +31,11 @@ from StringIO import StringIO
 import psycopg2
 
 # added code for the interface with Maarch
+import suds
+import urllib2
 from suds.client import Client
 from datetime import datetime
+from openerp import exceptions
 
 import openerp
 from openerp import tools
@@ -49,7 +52,9 @@ from content_index import cntIndex
 _logger = logging.getLogger(__name__)
 # added code for the interface with Maarch
 _url_maarch = 'http://10.0.0.195/maarch15/ws_server.php?WSDL'
-_client_maarch = Client(_url_maarch, username='bblier', password='maarch')  # test user
+# test user
+_user_maarch = 'bblier'
+_password_maarch = 'maarch'
 
 class document_file(osv.osv):
     _inherit = 'ir.attachment'
@@ -149,7 +154,7 @@ class document_file(osv.osv):
             f.write("uid : %s\n" % uid)  # 1
             # f.write("vals : %s\n" % vals)  # the document... [datas] => encoded content
             f.write("context : %s\n" % context)  # {'lang': u'fr_FR', 'tz': u'Europe/Brussels', 'uid': 1}
-            f.write("vals['partner_id'] : %s\n" % vals['partner_id'])  # 18
+            # f.write("vals['partner_id'] : %s\n" % vals['partner_id'])  # 18
             f.write("vals['file_type'] : %s\n" % vals['file_type'])  # application/pdf ; same as vals.get('file_type')
             # f.write("vals['index_content'] : %s\n" % vals['index_content'])  # crash...
             f.write("vals.get('datas_fname') : %s\n" % vals.get('datas_fname'))  # docname.pdf
@@ -187,31 +192,42 @@ class document_file(osv.osv):
 
     # added code for the interface with Maarch
     def _add_to_maarch(self, base64_encoded_content, document_subject):
-        mydate = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        # data relative to the document
-        data = _client_maarch.factory.create('arrayOfData')
-        typist = _client_maarch.factory.create('arrayOfDataContent')
-        typist.column = 'typist'
-        typist.value = 'odoo'
-        typist.type = 'string'
-        doc_date = _client_maarch.factory.create('arrayOfDataContent')
-        doc_date.column = 'doc_date'
-        doc_date.value = mydate
-        doc_date.type = 'string'
-        type_id = _client_maarch.factory.create('arrayOfDataContent')
-        type_id.column = 'type_id'
-        type_id.value = '15'  # misc. by default
-        type_id.type = 'string'
-        subject = _client_maarch.factory.create('arrayOfDataContent')
-        subject.column = 'subject'
-        subject.value = document_subject.decode('utf8')
-        subject.type = 'string'
-        data.datas.append(typist)
-        data.datas.append(doc_date)
-        data.datas.append(type_id)
-        data.datas.append(subject)
-        # call to the web service method
-        _client_maarch.service.storeResource(base64_encoded_content, data, 'letterbox_coll', 'res_letterbox', 'pdf', 'INIT')
+        try:
+            _client_maarch = Client(_url_maarch, username=_user_maarch, password=_password_maarch)
+            error = ''
+            mydate = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            # data relative to the document
+            data = _client_maarch.factory.create('arrayOfData')
+            typist = _client_maarch.factory.create('arrayOfDataContent')
+            typist.column = 'typist'
+            typist.value = 'odoo'
+            typist.type = 'string'
+            doc_date = _client_maarch.factory.create('arrayOfDataContent')
+            doc_date.column = 'doc_date'
+            doc_date.value = mydate
+            doc_date.type = 'string'
+            type_id = _client_maarch.factory.create('arrayOfDataContent')
+            type_id.column = 'type_id'
+            type_id.value = '15'  # misc. by default
+            type_id.type = 'string'
+            subject = _client_maarch.factory.create('arrayOfDataContent')
+            subject.column = 'subject'
+            subject.value = document_subject.decode('utf8')
+            subject.type = 'string'
+            data.datas.append(typist)
+            data.datas.append(doc_date)
+            data.datas.append(type_id)
+            data.datas.append(subject)
+            # call to the web service method
+            _client_maarch.service.storeResource(base64_encoded_content, data, 'letterbox_coll', 'res_letterbox', 'pdf', 'INIT')
+        except urllib2.URLError:
+            error = "L'URL de connexion est incorrecte, ou le serveur est indisponible."
+        except suds.transport.TransportError:
+            error = "Les identifiants de connexion fournis sont incorrects."
+        except:
+            error = "Une erreur est survenue lors du traitement."
+        if error:
+            raise exceptions.ValidationError("La pièce jointe ne peut pas être enregistrée dans Maarch : %s" % error)
 
 class document_directory(osv.osv):
     _name = 'document.directory'
